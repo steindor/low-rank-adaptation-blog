@@ -10,8 +10,10 @@ import time
 import lightning as L
 import numpy as np
 import torch
+import datasets as ds
 
 from generate import generate
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from lit_llama.lora import mark_only_lora_as_trainable, lora, lora_state_dict
 from lit_llama.model import LLaMA, LLaMAConfig
 from lit_llama.tokenizer import Tokenizer
@@ -44,29 +46,35 @@ warmup_steps = 100
 def main(
     data_dir: str = "data/alpaca", 
     pretrained_path: str = "checkpoints/lit-llama/7B/lit-llama.pth",
-    out_dir: str = "out/lora/alpaca",
+    out_dir: str = "output/",
 ):
 
-    fabric = L.Fabric(accelerator="cuda", devices=[3], precision="bf16-mixed")
+    fabric = L.Fabric(accelerator="cuda", devices=[4], precision="bf16-mixed")
     fabric.launch()
     fabric.seed_everything(1337 + fabric.global_rank)
 
     if fabric.global_rank == 0:
         os.makedirs(out_dir, exist_ok=True)
 
-    train_data, val_data = load_datasets(data_dir=data_dir)
+    #train_data, val_data = load_datasets(data_dir=data_dir)
 
-    config = LLaMAConfig.from_name("7B")
-    config.block_size = block_size
+    #config = LLaMAConfig.from_name("7B")
+    #config.block_size = block_size
 
-    checkpoint = torch.load(pretrained_path)
+    #checkpoint = torch.load(pretrained_path)
+    
+    _ds = ds.load_dataset('stoddur/rmh_tokenized_512')
+    _ds.train_test_split(test_size=0.05)
+    train_data = _ds['train']
+    val_data = _ds['test']
 
     with fabric.device, lora(r=lora_r, alpha=lora_alpha, dropout=lora_dropout, enabled=True):
         torch.set_default_tensor_type(torch.HalfTensor)
-        model = LLaMA(config).bfloat16()
+        #model = LLaMA(config).bfloat16()
+        model = AutoModelForCausalLM.from_pretrained('bigscience/bloom-560m')
         torch.set_default_tensor_type(torch.FloatTensor)
         # strict=False because missing keys due to LoRA weights not contained in checkpoint state
-        model.load_state_dict(checkpoint, strict=False) 
+        #model.load_state_dict(checkpoint, strict=False) 
     
     mark_only_lora_as_trainable(model)
 
@@ -159,7 +167,7 @@ def validate(fabric: L.Fabric, model: torch.nn.Module, val_data: np.ndarray) -> 
     out = losses.mean()
 
     # produce an example:
-    instruction = "Recommend a movie for me to watch during the weekend and explain the reason."
+    instruction = "Sigurður Ólafsson var bóndi sem að"
     
     output = generate_response(model, instruction)
     fabric.print(instruction)
